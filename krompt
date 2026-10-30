@@ -1,0 +1,20 @@
+The idea: You're a thief sneaking through a dark museum, and you can't see anything. The only way to "see" is to tap and send out a sound wave. The wave reveals the walls, guards, and treasure for a split second, then fades.
+
+The twist: Every wave also tells the guards where you are. So every tap is a gamble between knowing where you are and being heard.
+
+How it plays:
+
+Tap to send out an echo that shows the room around you.
+Swipe to move quietly. Moving slowly is silent, and moving fast makes noise.
+Grab the glowing treasure, then reach the exit.
+Guards walk patrols and rush toward any sound they hear.
+You can throw a coin to make noise somewhere else and pull the guards away.
+------------------------------------------------------------------
+Uvicorn server                  
+app.py
+requirements.txt
+tech stack
+fastapi
+jinja2
+html
+css

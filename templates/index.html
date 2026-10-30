@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Sneaky Thief</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <header>
+    <h1>&#128374; Sneaky Thief</h1>
+    <div id="hud">
+      <div class="hud-item">
+        <span class="icon">&#127915;</span><span>FLOOR</span>
+        <span class="val" id="hud-level">1</span>
+      </div>
+      <div class="hud-item">
+        <span class="icon">&#129689;</span><span>COINS</span>
+        <span class="val" id="coin-count">3</span>
+      </div>
+      <div class="hud-item">
+        <span class="icon">&#128680;</span><span>ALERT</span>
+        <span class="val" id="alert-level">QUIET</span>
+      </div>
+      <div class="hud-item">
+        <span class="icon">&#9201;</span><span>GUARDS</span>
+        <span class="val" id="guard-count">0</span>
+      </div>
+      <div class="hud-item" id="tiptoe-hud" style="display:none">
+        <span class="icon">&#129463;</span><span style="color:#a78bfa">TIPTOE</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Canvas -->
+  <div id="canvas-wrap">
+    <canvas id="game"></canvas>
+    <div id="level-badge">MUSEUM HEIST</div>
+
+    <!-- Noise bar -->
+    <div id="noise-bar-wrap">
+      <div id="noise-label">NOISE</div>
+      <div id="noise-bar-bg"><div id="noise-bar-fill"></div></div>
+    </div>
+
+    <!-- Mobile touch buttons -->
+    <div id="touch-actions">
+      <div class="t-btn" id="tb-echo"   title="Echo">&#128266;</div>
+      <div class="t-btn" id="tb-coin"   title="Throw Coin">&#129689;</div>
+      <div class="t-btn" id="tb-tiptoe" title="Tiptoe">&#129463;</div>
+    </div>
+
+    <!-- START -->
+    <div class="overlay" id="start-screen">
+      <h2>Sneaky Thief</h2>
+      <p class="sub">
+        You're blind inside the museum. Tap <kbd>Space</kbd> to send out an echo — it reveals everything for a moment,
+        but alerts guards to your position.<br/><br/>
+        <strong>Move:</strong> <kbd>W A S D</kbd> / arrows &nbsp;·&nbsp;
+        <strong>Echo:</strong> <kbd>Space</kbd> / click<br/>
+        <strong>Throw coin:</strong> <kbd>C</kbd> — guards chase the coin<br/>
+        <strong>Tiptoe:</strong> <kbd>T</kbd> — silent but slow (guards may still sense you)<br/>
+        Grab <span style="color:#ffd54f">⭐ treasure</span>, reach <span style="color:#66bb6a">▶ exit</span>.
+      </p>
+      <button class="btn big-btn" id="btn-start">START HEIST</button>
+    </div>
+
+    <!-- WIN -->
+    <div class="overlay hidden" id="win-screen">
+      <h2>HEIST COMPLETE</h2>
+      <p class="sub" id="win-msg"></p>
+      <button class="btn big-btn" id="btn-next">NEXT FLOOR &#8594;</button>
+    </div>
+
+    <!-- CAUGHT -->
+    <div class="overlay hidden" id="caught-screen">
+      <h2>CAUGHT!</h2>
+      <p class="sub" id="caught-msg"></p>
+      <button class="btn big-btn danger" id="btn-retry">TRY AGAIN</button>
+    </div>
+
+  </div><!-- /canvas-wrap -->
+
+  <!-- Controls -->
+  <div id="controls">
+    <button class="btn" id="btn-echo">&#128266; Echo <kbd>Space</kbd></button>
+    <button class="btn" id="btn-throw">&#129689; Coin <kbd>C</kbd></button>
+    <button class="btn tiptoe-btn" id="btn-tiptoe">&#129463; Tiptoe <kbd>T</kbd></button>
+    <button class="btn danger" id="btn-restart">&#8635; Restart</button>
+  </div>
+
+  <div id="help">
+    Move: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> &nbsp;·&nbsp;
+    Echo: <kbd>Space</kbd>/click &nbsp;·&nbsp;
+    Coin: <kbd>C</kbd> &nbsp;·&nbsp;
+    Tiptoe: <kbd>T</kbd> &nbsp;·&nbsp;
+    Slow = quiet &nbsp;·&nbsp; Fast = loud
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   SNEAKY THIEF  –  v2
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+"use strict";
+
+// ── tunables ────────────────────────────────────────────────────────────
+const TILE           = 36;
+const FPS            = 60;
+const ECHO_SPEED     = 4.4;
+const ECHO_FADE      = 0.55;     // seconds — snappier fade
+const NOISE_DECAY    = 0.018;
+const CAUGHT_DIST    = 0.82;
+// Guard base patrol speed; per-level multiplier applied on top
+const G_PATROL_BASE  = 0.046;
+const G_LEVEL_SCALE  = 0.25;    // +25% per level (more dramatic scaling)
+const G_CHASE_MULT   = 3.2;
+const G_ALERT_MULT   = 2.4;
+// Guard sight range scales with level too
+const G_SIGHT_BASE   = 3.8;
+const G_SIGHT_SCALE  = 0.4;     // +0.4 tiles per level
+// Tiptoe
+const TIPTOE_SPOT_CHANCE = 0.00035; // per frame while guard within 2.5 tiles
+
+// ── tile types ──────────────────────────────────────────────────────────
+const T_FLOOR   = 0;
+const T_WALL    = 1;
+const T_CHEST   = 2;   // treasure
+const T_EXIT    = 3;
+const T_PLANT   = 4;
+const T_VASE    = 5;
+const T_BENCH   = 6;
+const T_PAINT   = 7;   // painting on wall (decorative wall)
+const T_LIGHT   = 8;   // spotlight cone origin
+const T_PILLAR  = 9;
+
+// emojis / symbols used in rendering
+const DECO_EMOJI = {
+  [T_PLANT]:  ['🌿','🌱','🪴'],
+  [T_VASE]:   ['🏺','🪆'],
+  [T_BENCH]:  ['🪑'],
+  [T_PAINT]:  ['🖼️'],
+  [T_LIGHT]:  ['💡'],
+};
+
+// fast lerp using pre-parsed RGB arrays
+function lerpPal(dark, lit, t) {
+  return `rgb(${dark.map((v,i)=>Math.round(v+(lit[i]-v)*t)).join(',')})`;
+}
+
+// ── level palette (wall dark, wall lit, floor dark, floor lit, accent, echo hue) ──
+const PALETTES = [
+  // 1 – midnight blue
+  { wd:'#0d1628', wl:'#1e3a6e', fd:'#060c18', fl:'#0a1830', acc:'#4fc3f7', echo:'79,195,247' },
+  // 2 – deep teal / green vault
+  { wd:'#0a1f1a', wl:'#1a5040', fd:'#040e0b', fl:'#081a13', acc:'#4dd0a0', echo:'77,208,160' },
+  // 3 – purple gallery
+  { wd:'#180d28', wl:'#4a2080', fd:'#0a0614', fl:'#140a22', acc:'#ce93d8', echo:'206,147,216' },
+  // 4 – amber / gold room
+  { wd:'#1e1400', wl:'#5c3d00', fd:'#100c00', fl:'#1e1800', acc:'#ffca28', echo:'255,202,40' },
+  // 5 – crimson vault
+  { wd:'#1e0808', wl:'#5c1414', fd:'#100404', fl:'#1e0a0a', acc:'#ef9a9a', echo:'239,154,154' },
+];
+
+// Pre-parse all palette hex values into RGB arrays for fast per-frame lerping
+function parsePalette(p) {
+  const h2r = h => h.replace(/^#/,'').match(/.{2}/g).map(x=>parseInt(x,16));
+  return { wd:h2r(p.wd), wl:h2r(p.wl), fd:h2r(p.fd), fl:h2r(p.fl), acc:p.acc, echo:p.echo };
+}
+const PAL_RGB = PALETTES.map(parsePalette);
+
+// ── level maps ──────────────────────────────────────────────────────────
+// (0=floor 1=wall 2=chest 3=exit 4=plant 5=vase 6=bench 7=paint 8=light 9=pillar)
+const LEVELS = [
+  // ── Floor 1 ──────────────────────────────────────────────────────────
+  {
+    map: [
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      [1,0,0,0,4,0,1,0,0,0,0,0,0,0,0,0,0,0,8,1],
+      [1,0,1,1,0,0,1,0,1,1,1,0,1,1,0,1,1,1,0,1],
+      [1,0,1,0,0,0,0,0,0,0,1,0,0,1,0,0,0,1,0,1],
+      [1,0,1,0,1,7,1,1,1,0,1,0,5,0,0,1,0,0,0,1],
+      [1,0,0,0,0,0,0,0,1,0,0,0,1,1,0,1,0,9,0,1],
+      [1,1,1,0,1,0,1,0,1,0,1,0,0,0,0,0,0,1,0,1],
+      [1,0,0,0,1,0,1,0,0,0,1,1,1,0,1,1,0,0,4,1],
+      [1,0,1,1,1,0,1,1,1,0,0,0,6,0,0,0,0,1,0,1],
+      [1,0,0,0,0,0,0,0,0,0,1,1,0,1,1,0,1,1,0,1],
+      [1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,2,1],
+      [1,0,0,0,0,0,1,0,0,0,1,0,1,1,0,1,1,0,5,1],
+      [1,0,1,0,1,1,1,0,1,1,1,0,0,4,0,0,1,1,0,1],
+      [1,0,1,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,1],
+      [1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    ],
+    playerStart:{x:1,y:1},
+    guards:[
+      {x:10,y:5, patrol:[{x:10,y:5},{x:15,y:5},{x:15,y:9},{x:10,y:9}]},
+      {x:6, y:11,patrol:[{x:6,y:11},{x:6,y:7}]},
+    ],
+    coins:3,
+  },
+  // ── Floor 2 ──────────────────────────────────────────────────────────
+  {
+    map: [
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      [1,0,0,0,1,0,0,0,0,0,1,8,0,0,0,0,1,0,0,0,0,1],
+      [1,0,1,0,1,0,1,1,0,0,1,0,1,1,0,0,1,0,1,1,0,1],
+      [1,4,1,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,1],
+      [1,0,1,1,1,1,0,1,0,1,7,1,0,1,0,9,1,1,0,1,0,1],
+      [1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,4,1],
+      [1,1,0,1,1,0,1,1,1,0,0,1,1,0,1,0,1,1,0,1,1,1],
+      [1,0,0,0,1,0,0,0,6,0,1,0,0,0,1,0,0,0,0,0,0,1],
+      [1,0,1,0,1,1,1,0,1,0,1,0,1,0,1,1,1,0,1,0,5,1],
+      [1,0,1,0,0,0,1,0,1,0,0,0,1,0,0,0,1,0,1,0,0,1],
+      [1,0,5,0,1,0,0,0,1,1,1,0,0,0,1,0,0,0,0,0,2,1],
+      [1,1,1,0,1,0,1,0,0,0,1,0,1,0,1,0,1,1,0,1,0,1],
+      [1,0,0,0,0,0,1,0,1,0,1,0,1,4,0,0,0,1,0,1,0,1],
+      [1,0,1,1,1,0,0,0,1,0,0,0,1,1,1,0,0,0,0,0,0,1],
+      [1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    ],
+    playerStart:{x:1,y:1},
+    guards:[
+      {x:10,y:3, patrol:[{x:10,y:3},{x:17,y:3},{x:17,y:7},{x:10,y:7}]},
+      {x:4, y:8, patrol:[{x:4,y:8},{x:4,y:12}]},
+      {x:15,y:10,patrol:[{x:15,y:10},{x:19,y:10},{x:19,y:6},{x:15,y:6}]},
+    ],
+    coins:4,
+  },
+  // ── Floor 3 ──────────────────────────────────────────────────────────
+  {
+    map: [
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      [1,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+      [1,0,1,1,1,1,1,1,0,1,1,1,1,1,1,1,0,1,1,1,1,1,0,1],
+      [1,0,1,4,0,0,0,1,0,1,0,0,0,0,0,1,0,1,0,0,0,1,0,1],
+      [1,0,1,0,1,7,0,1,0,1,0,9,1,1,0,1,0,1,0,1,0,1,0,1],
+      [1,0,1,0,1,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,1,0,1],
+      [1,0,1,0,1,0,1,1,0,1,1,1,0,1,0,1,7,1,0,1,0,1,0,1],
+      [1,0,0,0,0,0,1,0,6,0,0,1,0,0,0,0,1,0,0,0,0,0,0,1],
+      [1,0,1,1,1,0,1,0,1,1,0,1,0,1,1,0,1,0,1,1,1,1,0,1],
+      [1,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,5,0,0,0,1],
+      [1,0,1,0,1,1,1,1,0,1,0,1,1,1,1,1,0,1,1,1,0,1,0,1],
+      [1,0,1,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,2,1],
+      [1,0,1,1,1,1,0,1,1,0,1,1,1,1,0,1,1,0,1,1,0,1,0,1],
+      [1,0,0,0,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,0,0,0,1],
+      [1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    ],
+    playerStart:{x:1,y:1},
+    guards:[
+      {x:12,y:3, patrol:[{x:12,y:3},{x:19,y:3},{x:19,y:9},{x:12,y:9}]},
+      {x:5, y:7, patrol:[{x:5,y:7},{x:5,y:12}]},
+      {x:19,y:11,patrol:[{x:19,y:11},{x:22,y:11}]},
+      {x:10,y:1, patrol:[{x:10,y:1},{x:20,y:1}]},
+    ],
+    coins:5,
+  },
+  // ── Floor 4 ──────────────────────────────────────────────────────────
+  {
+    map: [
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+      [1,0,1,1,1,1,0,1,1,9,1,1,0,1,1,1,0,1,1,1,0,1],
+      [1,0,1,7,0,1,0,1,0,0,0,1,0,1,0,0,0,1,0,4,0,1],
+      [1,0,1,0,0,1,0,0,0,1,0,1,0,0,0,1,0,0,0,1,0,1],
+      [1,0,0,0,0,0,0,1,0,1,0,0,0,1,0,1,0,8,0,0,0,1],
+      [1,1,1,0,1,1,1,1,0,1,1,0,1,1,0,1,1,1,0,1,1,1],
+      [1,0,0,0,1,6,0,0,0,0,1,0,0,0,1,0,0,0,5,0,0,1],
+      [1,0,1,0,1,1,1,0,1,0,1,0,1,0,1,1,1,0,1,0,0,1],
+      [1,0,1,0,0,0,0,0,1,0,0,4,1,0,0,0,1,0,1,0,0,1],
+      [1,0,0,0,1,0,0,0,1,1,1,0,0,0,1,0,0,0,0,0,2,1],
+      [1,1,0,1,1,0,1,0,0,0,1,0,1,0,1,0,1,0,0,1,0,1],
+      [1,0,0,0,0,0,1,0,1,0,1,0,1,0,0,7,0,1,0,1,0,1],
+      [1,0,1,1,1,0,0,0,1,0,0,0,1,1,1,0,0,0,0,0,0,1],
+      [1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    ],
+    playerStart:{x:1,y:1},
+    guards:[
+      {x:8, y:2, patrol:[{x:8,y:2},{x:17,y:2},{x:17,y:6},{x:8,y:6}]},
+      {x:4, y:9, patrol:[{x:4,y:9},{x:4,y:13}]},
+      {x:14,y:10,patrol:[{x:14,y:10},{x:19,y:10},{x:19,y:7},{x:14,y:7}]},
+      {x:11,y:5, patrol:[{x:11,y:5},{x:11,y:12}]},
+    ],
+    coins:4,
+  },
+  // ── Floor 5 ──────────────────────────────────────────────────────────
+  {
+    map: [
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+      [1,0,1,1,1,1,1,1,0,1,7,1,1,1,1,1,0,1,1,1,1,1,0,1],
+      [1,0,1,0,4,0,0,1,0,1,0,0,0,0,0,1,0,1,5,0,0,1,0,1],
+      [1,0,1,0,1,1,0,1,0,1,0,9,1,1,0,1,0,1,0,1,0,1,0,1],
+      [1,0,1,0,1,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,1,0,1],
+      [1,0,1,8,1,0,1,1,0,1,1,1,0,1,0,1,1,1,0,1,0,1,0,1],
+      [1,0,0,0,0,0,1,0,6,0,0,1,0,0,0,0,1,0,0,0,0,0,0,1],
+      [1,0,1,1,1,0,1,0,1,1,0,1,0,1,1,0,1,0,1,1,1,1,0,1],
+      [1,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,5,0,0,0,1],
+      [1,0,1,0,1,1,1,1,0,1,7,1,1,1,1,1,0,1,1,1,0,1,0,1],
+      [1,0,1,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,2,1],
+      [1,0,1,1,1,1,0,1,1,0,1,1,1,1,0,1,1,0,1,1,0,1,0,1],
+      [1,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+      [1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    ],
+    playerStart:{x:1,y:1},
+    guards:[
+      {x:11,y:3, patrol:[{x:11,y:3},{x:19,y:3},{x:19,y:9},{x:11,y:9}]},
+      {x:5, y:7, patrol:[{x:5,y:7},{x:5,y:12}]},
+      {x:19,y:11,patrol:[{x:19,y:11},{x:22,y:11}]},
+      {x:10,y:1, patrol:[{x:10,y:1},{x:20,y:1}]},
+      {x:7, y:10,patrol:[{x:7,y:10},{x:7,y:6},{x:14,y:6},{x:14,y:10}]},
+    ],
+    coins:5,
+  },
+];
+
+// ── global state ────────────────────────────────────────────────────────
+let canvas, ctx, W, H, mapW, mapH;
+let state = 'start';
+let levelIdx = 0;
+let map, tileReveal;
+let player, guards, echoes, coinThrows, particles;
+let hasTreasure, noiseLevel, frameCount;
+let tiptoeMode = false;
+let keys = {};
+let cameraX = 0, cameraY = 0;
+let pal;    // current palette (hex strings)
+let palR;   // current palette (parsed RGB arrays)
+
+// ── init ────────────────────────────────────────────────────────────────
+function init() {
+  canvas = document.getElementById('game');
+  ctx    = canvas.getContext('2d');
+  resize();
+  window.addEventListener('resize', resize);
+  bindInput();
+  loadLevel(0);
+  requestAnimationFrame(loop);
+}
+
+function resize() {
+  const wrap = document.getElementById('canvas-wrap');
+  W = wrap.clientWidth;
+  H = wrap.clientHeight;
+  canvas.width  = W;
+  canvas.height = H;
+}
+
+// ── level load ──────────────────────────────────────────────────────────
+function loadLevel(idx) {
+  const lvl = LEVELS[idx % LEVELS.length];
+  pal  = PALETTES[idx % PALETTES.length];
+  palR = PAL_RGB[idx % PAL_RGB.length];
+
+  map  = lvl.map.map(r => [...r]);
+  mapH = map.length;
+  mapW = map[0].length;
+
+  hasTreasure = false;
+  noiseLevel  = 0;
+  frameCount  = 0;
+  tiptoeMode  = false;
+  echoes      = [];
+  coinThrows  = [];
+  particles   = [];
+
+  let treasurePos = null, exitPos = null;
+  for (let r=0;r<mapH;r++) for (let c=0;c<mapW;c++) {
+    if (map[r][c]===T_CHEST) treasurePos={x:c+0.5,y:r+0.5};
+    if (map[r][c]===T_EXIT)  exitPos   ={x:c+0.5,y:r+0.5};
+  }
+
+  player = {
+    x: lvl.playerStart.x+0.5, y: lvl.playerStart.y+0.5,
+    vx:0, vy:0, speed:0,
+    coins: lvl.coins ?? 3,
+    treasurePos, exitPos,
+  };
+
+  // Guard speed + sight scales with level
+  const speedMult = 1 + idx * G_LEVEL_SCALE;
+  const sightRange = G_SIGHT_BASE + idx * G_SIGHT_SCALE;
+  guards = lvl.guards.map(g => ({
+    x: g.x+0.5, y: g.y+0.5,
+    patrol:  g.patrol.map(p=>({x:p.x+0.5,y:p.y+0.5})),
+    patrolIdx: 0,
+    state: 'patrol',
+    alertTarget: null,
+    coinTarget:  null,   // where the coin landed — guards go there
+    alertTimer: 0,
+    chaseTimer: 0,
+    speed: G_PATROL_BASE * speedMult,
+    sight: sightRange,
+    revealTimer: 0,
+    _searchTarget: null,
+  }));
+
+  tileReveal = new Float32Array(mapH * mapW);
+  cameraX = 0; cameraY = 0;
+
+  // HUD
+  document.getElementById('coin-count').textContent  = player.coins;
+  document.getElementById('guard-count').textContent = guards.length;
+  document.getElementById('hud-level').textContent   = (idx % LEVELS.length)+1;
+  document.getElementById('alert-level').textContent = 'QUIET';
+  document.getElementById('alert-level').style.color = '';
+  document.getElementById('tiptoe-hud').style.display = 'none';
+  document.getElementById('btn-tiptoe').classList.remove('active');
+}
+
+// ── input ────────────────────────────────────────────────────────────────
+function bindInput() {
+  window.addEventListener('keydown', e=>{
+    keys[e.code] = true;
+    if (state!=='playing') return;
+    if (e.code==='Space') { e.preventDefault(); doEcho(); }
+    if (e.code==='KeyC')  { e.preventDefault(); throwCoin(); }
+    if (e.code==='KeyT')  { e.preventDefault(); toggleTiptoe(); }
+  });
+  window.addEventListener('keyup', e=>{ keys[e.code]=false; });
+
+  canvas.addEventListener('pointerdown', e=>{
+    if (state==='playing'){ doEcho(); e.preventDefault(); }
+  });
+
+  document.getElementById('btn-start').addEventListener('click',   startGame);
+  document.getElementById('btn-next').addEventListener('click',    nextLevel);
+  document.getElementById('btn-retry').addEventListener('click',   retryLevel);
+  document.getElementById('btn-restart').addEventListener('click', ()=>{ levelIdx=0; retryLevel(); });
+  document.getElementById('btn-echo').addEventListener('click',    ()=>{ if(state==='playing') doEcho(); });
+  document.getElementById('btn-throw').addEventListener('click',   ()=>{ if(state==='playing') throwCoin(); });
+  document.getElementById('btn-tiptoe').addEventListener('click',  ()=>{ if(state==='playing') toggleTiptoe(); });
+  document.getElementById('tb-echo').addEventListener('pointerdown',   e=>{ e.stopPropagation(); if(state==='playing') doEcho(); });
+  document.getElementById('tb-coin').addEventListener('pointerdown',   e=>{ e.stopPropagation(); if(state==='playing') throwCoin(); });
+  document.getElementById('tb-tiptoe').addEventListener('pointerdown', e=>{ e.stopPropagation(); if(state==='playing') toggleTiptoe(); });
+}
+
+function startGame()  { document.getElementById('start-screen').classList.add('hidden');  state='playing'; }
+function nextLevel()  { document.getElementById('win-screen').classList.add('hidden');    levelIdx++; loadLevel(levelIdx); state='playing'; }
+function retryLevel() { document.getElementById('caught-screen').classList.add('hidden'); loadLevel(levelIdx); state='playing'; }
+
+function toggleTiptoe() {
+  tiptoeMode = !tiptoeMode;
+  document.getElementById('tiptoe-hud').style.display  = tiptoeMode ? '' : 'none';
+  document.getElementById('btn-tiptoe').classList.toggle('active', tiptoeMode);
+}
+
+// ── echo ─────────────────────────────────────────────────────────────────
+function doEcho() {
+  echoes.push({ x:player.x, y:player.y, r:0, alpha:1.0, born:frameCount });
+  makeNoise(player.x, player.y, 8, true);
+  spawnParticles(player.x, player.y, pal.acc, 8);
+}
+
+// ── coin throw ────────────────────────────────────────────────────────────
+function throwCoin() {
+  if (player.coins<=0) return;
+  player.coins--;
+  document.getElementById('coin-count').textContent = player.coins;
+
+  // Use last known movement direction; default to upward if never moved
+  const dx = player.lastDx || 0;
+  const dy = player.lastDy || -1;
+  const norm = Math.sqrt(dx*dx+dy*dy)||1;
+  const d = 4+Math.random()*3;
+  const tx = clamp(player.x+(dx/norm)*d, 0.5, mapW-0.5);
+  const ty = clamp(player.y+(dy/norm)*d, 0.5, mapH-0.5);
+
+  coinThrows.push({ x:tx, y:ty, life:220, ringR:0 });
+
+  // Guards go to coin until something else happens
+  guards.forEach(g=>{
+    const gd = dist(g.x,g.y,tx,ty);
+    if (gd < 12) {
+      g.coinTarget  = {x:tx,y:ty};
+      g.alertTarget = {x:tx,y:ty};
+      if (g.state==='patrol'||g.state==='return'||g.state==='search') {
+        g.state = 'coin';
+        g.alertTimer = 260+Math.floor(Math.random()*80);
+      }
+    }
+  });
+
+  spawnParticles(tx, ty, '#ffcc02', 10);
+}
+
+// ── noise ────────────────────────────────────────────────────────────────
+// fromPlayer=true means player caused it and overrides coin pursuit
+function makeNoise(sx, sy, radius, fromPlayer) {
+  if (fromPlayer) noiseLevel = Math.min(1, noiseLevel+0.5);
+  guards.forEach(g=>{
+    if (dist(g.x,g.y,sx,sy)>radius) return;
+    g.alertTarget = {x:sx,y:sy};
+    if (fromPlayer) {
+      // Real noise cancels coin following
+      g.coinTarget = null;
+      if (g.state!=='chase') {
+        g.state = 'alert';
+        g.alertTimer = 200+Math.floor(Math.random()*80);
+      }
+    } else {
+      // Coin / echo noise only pulls non-chasing guards
+      if (g.state==='patrol'||g.state==='return'||g.state==='search'||g.state==='coin') {
+        g.state = 'alert';
+        g.alertTimer = 180+Math.floor(Math.random()*60);
+      }
+    }
+  });
+}
+
+// ── update ────────────────────────────────────────────────────────────────
+function update() {
+  frameCount++; // always tick for animations
+  if (state!=='playing') return;
+  updatePlayer();
+  updateGuards();
+  updateEchoes();
+  updateCoinThrows();
+  updateParticles();
+  decayReveal();
+  decayNoise();
+  updateHUD();
+  checkWin();
+  checkCaught();
+}
+
+// ── player ────────────────────────────────────────────────────────────────
+function updatePlayer() {
+  const isTip = tiptoeMode;
+  const maxSpd  = isTip ? 0.07 : 0.16;
+  const accel   = isTip ? 0.05 : 0.12;
+  const fric    = 0.78;
+  let ax=0, ay=0;
+
+  if (keys['ArrowLeft'] ||keys['KeyA']) ax-=accel;
+  if (keys['ArrowRight']||keys['KeyD']) ax+=accel;
+  if (keys['ArrowUp']   ||keys['KeyW']) ay-=accel;
+  if (keys['ArrowDown'] ||keys['KeyS']) ay+=accel;
+  if (ax&&ay){ ax*=0.707; ay*=0.707; }
+
+  player.vx = (player.vx+ax)*fric;
+  player.vy = (player.vy+ay)*fric;
+
+  const spd = Math.sqrt(player.vx**2+player.vy**2);
+  if (spd>maxSpd){ player.vx*=maxSpd/spd; player.vy*=maxSpd/spd; }
+  player.speed = spd;
+  // Track last non-zero movement direction for coin throws
+  if (spd > 0.005) { player.lastDx = player.vx; player.lastDy = player.vy; }
+
+  // Noise from movement
+  if (!isTip) {
+    const noiseThresh = maxSpd * 0.6;
+    if (spd > noiseThresh) {
+      const push = (spd/maxSpd)*0.9*0.02;
+      noiseLevel = Math.min(1, noiseLevel+push);
+      if (Math.random()<push*5) makeNoise(player.x,player.y,3+spd/maxSpd*4,true);
+    }
+  } else {
+    // Tiptoe: tiny random spot check by nearby guards
+    guards.forEach(g=>{
+      if (dist(g.x,g.y,player.x,player.y)<2.5 && Math.random()<TIPTOE_SPOT_CHANCE) {
+        makeNoise(player.x,player.y,1,true);
+      }
+    });
+  }
+
+  // Move + collide
+  const r = 0.32;
+  const nx = player.x+player.vx, ny = player.y+player.vy;
+  if (!wallAt(nx,player.y,r)) player.x=nx; else player.vx*=-0.2;
+  if (!wallAt(player.x,ny,r)) player.y=ny; else player.vy*=-0.2;
+
+  // Collect treasure
+  if (!hasTreasure && player.treasurePos &&
+      dist(player.x,player.y,player.treasurePos.x,player.treasurePos.y)<0.7) {
+    hasTreasure=true;
+    const tc=Math.floor(player.treasurePos.x), tr=Math.floor(player.treasurePos.y);
+    if (map[tr]?.[tc]===T_CHEST) map[tr][tc]=T_FLOOR;
+    spawnParticles(player.treasurePos.x,player.treasurePos.y,'#ffd54f',24);
+    spawnParticles(player.treasurePos.x,player.treasurePos.y,'#fff176',12);
+  }
+}
+
+function wallAt(x,y,r) {
+  for (const p of [{x:x-r,y:y-r},{x:x+r,y:y-r},{x:x-r,y:y+r},{x:x+r,y:y+r}]) {
+    const col=Math.floor(p.x), row=Math.floor(p.y);
+    if (row<0||row>=mapH||col<0||col>=mapW) return true;
+    const t=map[row][col];
+    // Only hard walls and pillars are solid; decorations are passable
+    if (t===T_WALL||t===T_PILLAR) return true;
+  }
+  return false;
+}
+
+// ── guards ────────────────────────────────────────────────────────────────
+function updateGuards() {
+  guards.forEach(g=>{
+    switch(g.state){
+      case 'patrol': updatePatrol(g); break;
+      case 'alert':  updateAlert(g);  break;
+      case 'chase':  updateChase(g);  break;
+      case 'search': updateSearch(g); break;
+      case 'return': updateReturn(g); break;
+      case 'coin':   updateCoin(g);   break;
+    }
+    g.revealTimer=Math.max(0,g.revealTimer-1);
+  });
+}
+
+function moveToward(g,tx,ty,mult) {
+  const dx=tx-g.x, dy=ty-g.y;
+  const d=Math.sqrt(dx*dx+dy*dy);
+  if (d<0.05) return true;
+  const step=Math.min(g.speed*(mult||1),d);
+  const nx=g.x+(dx/d)*step, ny=g.y+(dy/d)*step;
+  if (!wallAt(nx,g.y,0.3)) g.x=nx;
+  if (!wallAt(g.x,ny,0.3)) g.y=ny;
+  return d<0.15;
+}
+
+function updatePatrol(g) {
+  const t=g.patrol[g.patrolIdx];
+  if (moveToward(g,t.x,t.y,1)) g.patrolIdx=(g.patrolIdx+1)%g.patrol.length;
+  if (canSeePlayer(g, g.sight)){ g.state='chase'; g.chaseTimer=300; }
+}
+
+function updateAlert(g) {
+  g.alertTimer--;
+  if (g.alertTimer<=0){ g.state='search'; g.alertTimer=220; return; }
+  if (g.alertTarget) moveToward(g,g.alertTarget.x,g.alertTarget.y,G_ALERT_MULT);
+  if (canSeePlayer(g, g.sight+1)){ g.state='chase'; g.chaseTimer=360; }
+}
+
+function updateChase(g) {
+  g.chaseTimer--;
+  if (g.chaseTimer<=0&&!canSeePlayer(g, g.sight+1)){ g.state='search'; g.alertTimer=300; return; }
+  moveToward(g,player.x,player.y,G_CHASE_MULT);
+  if (canSeePlayer(g, g.sight+1)) g.chaseTimer=360;
+}
+
+function updateSearch(g) {
+  g.alertTimer--;
+  if (g.alertTimer<=0){ g.state='return'; return; }
+  if (!g._searchTarget||dist(g.x,g.y,g._searchTarget.x,g._searchTarget.y)<0.3) {
+    const a=Math.random()*Math.PI*2, r=1+Math.random()*2;
+    const base=g.alertTarget||g;
+    g._searchTarget={
+      x:clamp(base.x+Math.cos(a)*r,0.5,mapW-0.5),
+      y:clamp(base.y+Math.sin(a)*r,0.5,mapH-0.5),
+    };
+  }
+  moveToward(g,g._searchTarget.x,g._searchTarget.y,0.8);
+  if (canSeePlayer(g, g.sight)){ g.state='chase'; g.chaseTimer=360; }
+}
+
+function updateReturn(g) {
+  const t=g.patrol[g.patrolIdx];
+  if (moveToward(g,t.x,t.y,0.9)) g.state='patrol';
+}
+
+// Guard follows coin until they arrive — stay there until new noise
+function updateCoin(g) {
+  g.alertTimer--;
+  if (!g.coinTarget||g.alertTimer<=0){ g.coinTarget=null; g.state='search'; g.alertTimer=180; return; }
+  if (moveToward(g,g.coinTarget.x,g.coinTarget.y,G_ALERT_MULT)) {
+    // Arrived at coin — search the area
+    g._searchTarget=null;
+    g.alertTarget=g.coinTarget;
+    g.coinTarget=null;
+    g.state='search';
+    g.alertTimer=200;
+  }
+  if (canSeePlayer(g, g.sight+1)){ g.coinTarget=null; g.state='chase'; g.chaseTimer=360; }
+}
+
+function canSeePlayer(g, range) {
+  const d=dist(g.x,g.y,player.x,player.y);
+  if (d>range) return false;
+  // Finer ray steps — check every 0.25 tiles
+  const steps=Math.ceil(d/0.25);
+  for (let i=1;i<steps;i++){
+    const t=i/steps;
+    const rx=g.x+(player.x-g.x)*t, ry=g.y+(player.y-g.y)*t;
+    const col=Math.floor(rx), row=Math.floor(ry);
+    if (row<0||row>=mapH||col<0||col>=mapW) return false;
+    const tile=map[row][col];
+    // Walls and pillars block sight
+    if (tile===T_WALL||tile===T_PILLAR) return false;
+  }
+  return true;
+}
+
+// ── echoes ────────────────────────────────────────────────────────────────
+function updateEchoes() {
+  echoes.forEach(e=>{
+    e.r+=ECHO_SPEED;
+    const age=(frameCount-e.born)/FPS;
+    e.alpha=Math.max(0,1-age/ECHO_FADE);
+    const band=ECHO_SPEED*2;
+    for (let row=0;row<mapH;row++) for (let col=0;col<mapW;col++){
+      const d=dist(e.x,e.y,col+0.5,row+0.5);
+      if (d>=e.r-band&&d<=e.r+band/2){
+        const b=e.alpha*Math.max(0,1-Math.abs(d-e.r)/band);
+        const idx=row*mapW+col;
+        if (b>tileReveal[idx]) tileReveal[idx]=b;
+      }
+    }
+    guards.forEach(g=>{
+      const d=dist(e.x,e.y,g.x,g.y);
+      if (d>=e.r-band&&d<=e.r+band) g.revealTimer=Math.max(g.revealTimer,45);
+    });
+  });
+  echoes=echoes.filter(e=>e.alpha>0.01);
+}
+
+// ── coin throws ───────────────────────────────────────────────────────────
+function updateCoinThrows() {
+  coinThrows.forEach(c=>{ c.life--; c.ringR=Math.min(c.ringR+0.12,2.8); });
+  coinThrows=coinThrows.filter(c=>c.life>0);
+}
+
+// ── particles ─────────────────────────────────────────────────────────────
+function spawnParticles(x,y,color,count){
+  for (let i=0;i<count;i++){
+    const a=Math.random()*Math.PI*2, s=0.018+Math.random()*0.065;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,color});
+  }
+}
+function updateParticles(){
+  particles.forEach(p=>{ p.x+=p.vx; p.y+=p.vy; p.vy+=0.001; p.life-=0.022; });
+  particles=particles.filter(p=>p.life>0);
+}
+
+// ── decay ─────────────────────────────────────────────────────────────────
+function decayReveal(){
+  // 0.013/frame ≈ ~4.5s full fade at 60fps — feels punchy without being instant
+  for (let i=0;i<tileReveal.length;i++) tileReveal[i]=Math.max(0,tileReveal[i]-0.013);
+}
+function decayNoise(){ noiseLevel=Math.max(0,noiseLevel-NOISE_DECAY); }
+
+// ── HUD ───────────────────────────────────────────────────────────────────
+function updateHUD(){
+  const fill=document.getElementById('noise-bar-fill');
+  fill.style.width=(noiseLevel*100)+'%';
+  fill.style.background=noiseLevel>0.7?'#ef5350':noiseLevel>0.4?'#ffa726':pal.acc;
+
+  const alertEl=document.getElementById('alert-level');
+  const chasing=guards.some(g=>g.state==='chase');
+  const alerted=guards.some(g=>g.state==='alert'||g.state==='coin');
+  if (chasing){ alertEl.textContent='CHASING!'; alertEl.style.color='#ef5350'; }
+  else if (alerted){ alertEl.textContent='ALERTED'; alertEl.style.color='#ffa726'; }
+  else { alertEl.textContent='QUIET'; alertEl.style.color=pal.acc; }
+}
+
+// ── win / caught ──────────────────────────────────────────────────────────
+function checkWin(){
+  if (!hasTreasure||!player.exitPos) return;
+  if (dist(player.x,player.y,player.exitPos.x,player.exitPos.y)<0.7){
+    state='win';
+    document.getElementById('win-msg').textContent=
+      `Floor ${(levelIdx%LEVELS.length)+1} cleared. The loot is yours.`;
+    document.getElementById('win-screen').classList.remove('hidden');
+  }
+}
+function checkCaught(){
+  for (const g of guards){
+    if (dist(g.x,g.y,player.x,player.y)<CAUGHT_DIST){
+      state='caught';
+      document.getElementById('caught-msg').textContent=
+        `A guard caught you on floor ${(levelIdx%LEVELS.length)+1}. Try again.`;
+      document.getElementById('caught-screen').classList.remove('hidden');
+      return;
+    }
+  }
+}
+
+// ── camera ────────────────────────────────────────────────────────────────
+function updateCamera(){
+  const totalW=mapW*TILE, totalH=mapH*TILE;
+  cameraX+=(player.x*TILE-W/2-cameraX)*0.12;
+  cameraY+=(player.y*TILE-H/2-cameraY)*0.12;
+  cameraX=clamp(cameraX,0,Math.max(0,totalW-W));
+  cameraY=clamp(cameraY,0,Math.max(0,totalH-H));
+  if (totalW<=W) cameraX=(totalW-W)/2;
+  if (totalH<=H) cameraY=(totalH-H)/2;
+}
+
+// ── render ────────────────────────────────────────────────────────────────
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#000';
+  ctx.fillRect(0,0,W,H);
+
+  if (state==='start'){ renderSplash(); return; }
+
+  updateCamera();
+  ctx.save();
+  ctx.translate(-cameraX,-cameraY);
+
+  renderTiles();
+  renderCoinThrows();
+  renderSpecials();
+  renderParticles();
+  renderEchoRings();
+  renderGuards();
+  renderPlayer();
+
+  ctx.restore();
+  renderVignette();
+  if (tiptoeMode) renderTiptoeOverlay();
+}
+
+// ── splash ────────────────────────────────────────────────────────────────
+function renderSplash(){
+  for (let i=0;i<80;i++){
+    const x=(Math.sin(i*7.3+frameCount*0.005)*0.5+0.5)*W;
+    const y=(Math.cos(i*4.1+frameCount*0.003)*0.5+0.5)*H;
+    ctx.fillStyle=`rgba(79,195,247,0.04)`;
+    ctx.beginPath(); ctx.arc(x,y,1+Math.sin(i+frameCount*0.02)*1,0,Math.PI*2); ctx.fill();
+  }
+}
+
+// ── tiles ─────────────────────────────────────────────────────────────────
+// Decoration emoji cache per tile index
+const _decoCache = new Map();
+function getDecoEmoji(idx, type) {
+  if (!_decoCache.has(idx)) {
+    const opts = DECO_EMOJI[type]||['?'];
+    _decoCache.set(idx, opts[idx % opts.length]);
+  }
+  return _decoCache.get(idx);
+}
+
+function renderTiles(){
+  const tw=TILE;
+  const sc=Math.max(0,Math.floor(cameraX/tw)-1), ec=Math.min(mapW,Math.ceil((cameraX+W)/tw)+1);
+  const sr=Math.max(0,Math.floor(cameraY/tw)-1), er=Math.min(mapH,Math.ceil((cameraY+H)/tw)+1);
+
+  for (let row=sr;row<er;row++) for (let col=sc;col<ec;col++){
+    const tile=map[row][col];
+    const bright=tileReveal[row*mapW+col];
+    const px=col*tw, py=row*tw;
+    const idx=row*mapW+col;
+
+    if (tile===T_WALL){
+      ctx.fillStyle=bright<0.01?'#040508':lerpPal(palR.wd,palR.wl,bright);
+      ctx.fillRect(px,py,tw,tw);
+      if (bright>0.04){
+        ctx.fillStyle=`rgba(180,220,255,${bright*0.3})`;
+        ctx.fillRect(px,py,tw,2);
+        ctx.fillStyle=`rgba(0,0,0,${bright*0.25})`;
+        ctx.fillRect(px,py+tw-2,tw,2);
+      }
+    } else {
+      // Floor base
+      ctx.fillStyle=bright<0.01?'#020304':lerpPal(palR.fd,palR.fl,bright);
+      ctx.fillRect(px,py,tw,tw);
+
+      // Floor grid dot
+      if (bright>0.04){
+        ctx.fillStyle=`rgba(120,160,200,${bright*0.2})`;
+        ctx.fillRect(px+tw/2-1,py+tw/2-1,2,2);
+      }
+
+      // Decorative floor tiles
+      if (tile!==T_FLOOR && tile!==T_CHEST && tile!==T_EXIT && bright>0.03){
+        const alpha=Math.min(1,bright*2.5);
+        ctx.globalAlpha=alpha;
+        ctx.font=`${tw*0.7}px serif`;
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        if (tile===T_PLANT){
+          // Green glow
+          const g=ctx.createRadialGradient(px+tw/2,py+tw/2,0,px+tw/2,py+tw/2,tw*0.8);
+          g.addColorStop(0,`rgba(80,200,80,${alpha*0.35})`);
+          g.addColorStop(1,'rgba(80,200,80,0)');
+          ctx.fillStyle=g; ctx.globalAlpha=1;
+          ctx.beginPath(); ctx.arc(px+tw/2,py+tw/2,tw*0.8,0,Math.PI*2); ctx.fill();
+          ctx.globalAlpha=alpha;
+          ctx.fillText(getDecoEmoji(idx,T_PLANT),px+tw/2,py+tw/2);
+        } else if (tile===T_VASE){
+          const g=ctx.createRadialGradient(px+tw/2,py+tw/2,0,px+tw/2,py+tw/2,tw*0.7);
+          g.addColorStop(0,`rgba(210,120,30,${alpha*0.3})`);
+          g.addColorStop(1,'rgba(210,120,30,0)');
+          ctx.fillStyle=g; ctx.globalAlpha=1;
+          ctx.beginPath(); ctx.arc(px+tw/2,py+tw/2,tw*0.7,0,Math.PI*2); ctx.fill();
+          ctx.globalAlpha=alpha;
+          ctx.fillText(getDecoEmoji(idx,T_VASE),px+tw/2,py+tw/2);
+        } else if (tile===T_BENCH){
+          ctx.fillStyle=`rgba(140,90,30,${alpha*0.4})`;
+          ctx.fillRect(px+4,py+tw/2-4,tw-8,8);
+          ctx.globalAlpha=alpha;
+          ctx.fillText('🪑',px+tw/2,py+tw/2);
+        } else if (tile===T_PAINT){
+          // Painting on wall — draw as floor deco; walls adjacent show frame
+          const g2=ctx.createRadialGradient(px+tw/2,py+tw/2,0,px+tw/2,py+tw/2,tw*0.9);
+          g2.addColorStop(0,`rgba(200,60,200,${alpha*0.25})`);
+          g2.addColorStop(1,'rgba(200,60,200,0)');
+          ctx.fillStyle=g2; ctx.globalAlpha=1;
+          ctx.beginPath(); ctx.arc(px+tw/2,py+tw/2,tw*0.9,0,Math.PI*2); ctx.fill();
+          ctx.globalAlpha=alpha;
+          ctx.fillText('🖼️',px+tw/2,py+tw/2);
+        } else if (tile===T_LIGHT){
+          // Spotlight — yellow cone emanating downward
+          const g3=ctx.createRadialGradient(px+tw/2,py+tw/2,0,px+tw/2,py+tw/2,tw*1.8);
+          g3.addColorStop(0,`rgba(255,240,100,${alpha*0.45})`);
+          g3.addColorStop(1,'rgba(255,240,100,0)');
+          ctx.fillStyle=g3; ctx.globalAlpha=1;
+          ctx.beginPath(); ctx.arc(px+tw/2,py+tw/2,tw*1.8,0,Math.PI*2); ctx.fill();
+          ctx.globalAlpha=alpha;
+          ctx.fillText('💡',px+tw/2,py+tw/2);
+        } else if (tile===T_PILLAR){
+          ctx.fillStyle=bright<0.01?'#111':lerpPal([42,42,58],[96,96,160],bright);
+          ctx.beginPath(); ctx.arc(px+tw/2,py+tw/2,tw*0.38,0,Math.PI*2); ctx.fill();
+          if (bright>0.05){
+            ctx.strokeStyle=`rgba(180,180,255,${bright*0.6})`;
+            ctx.lineWidth=2;
+            ctx.beginPath(); ctx.arc(px+tw/2,py+tw/2,tw*0.38,0,Math.PI*2); ctx.stroke();
+          }
+          ctx.globalAlpha=alpha;
+        }
+        ctx.globalAlpha=1;
+      }
+    }
+  }
+}
+
+// ── specials (treasure + exit) ────────────────────────────────────────────
+function renderSpecials(){
+  const tw=TILE;
+  // Treasure
+  if (!hasTreasure&&player.treasurePos){
+    const tp=player.treasurePos;
+    const bright=tileReveal[Math.floor(tp.y)*mapW+Math.floor(tp.x)];
+    const px=tp.x*tw, py=tp.y*tw;
+    const pulse=0.75+Math.sin(frameCount*0.07)*0.25;
+    const ga=ctx.createRadialGradient(px,py,0,px,py,tw*1.4*pulse);
+    ga.addColorStop(0,`rgba(255,220,50,${0.55*(bright>0.05?1:0.1)*pulse})`);
+    ga.addColorStop(1,'rgba(255,220,50,0)');
+    ctx.fillStyle=ga; ctx.beginPath(); ctx.arc(px,py,tw*1.4*pulse,0,Math.PI*2); ctx.fill();
+    const alpha=bright>0.05?1:0.15*pulse;
+    ctx.globalAlpha=alpha;
+    ctx.font=`${tw*0.85}px serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('⭐',px,py);
+    ctx.globalAlpha=1;
+  }
+  // Exit
+  if (player.exitPos){
+    const ep=player.exitPos;
+    const bright=tileReveal[Math.floor(ep.y)*mapW+Math.floor(ep.x)];
+    const px=ep.x*tw, py=ep.y*tw;
+    const alpha=hasTreasure?1:(bright>0.05?0.5:0.05);
+    if (hasTreasure){
+      const pulse=0.7+Math.sin(frameCount*0.09)*0.3;
+      const ge=ctx.createRadialGradient(px,py,0,px,py,tw*1.6);
+      ge.addColorStop(0,`rgba(100,220,110,${0.65*pulse})`);
+      ge.addColorStop(1,'rgba(100,220,110,0)');
+      ctx.fillStyle=ge; ctx.beginPath(); ctx.arc(px,py,tw*1.6,0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha=alpha;
+    ctx.font=`${tw*0.85}px serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=hasTreasure?'#66bb6a':'#2d5c30';
+    ctx.fillText('▶',px,py);
+    ctx.globalAlpha=1;
+  }
+}
+
+// ── echo rings ────────────────────────────────────────────────────────────
+function renderEchoRings(){
+  echoes.forEach(e=>{
+    const px=e.x*TILE, py=e.y*TILE, r=e.r*TILE;
+    // Outer ring
+    ctx.beginPath(); ctx.arc(px,py,r,0,Math.PI*2);
+    ctx.strokeStyle=`rgba(${pal.echo},${e.alpha*0.65})`;
+    ctx.lineWidth=2.5; ctx.stroke();
+    // Soft inner glow ring
+    ctx.beginPath(); ctx.arc(px,py,Math.max(0,r-ECHO_SPEED*TILE*0.5),0,Math.PI*2);
+    ctx.strokeStyle=`rgba(${pal.echo},${e.alpha*0.18})`;
+    ctx.lineWidth=10; ctx.stroke();
+  });
+}
+
+// ── coin throws ───────────────────────────────────────────────────────────
+function renderCoinThrows(){
+  coinThrows.forEach(c=>{
+    const px=c.x*TILE, py=c.y*TILE;
+    const alpha=Math.min(1,c.life/40);
+    // Ripple ring
+    ctx.beginPath(); ctx.arc(px,py,c.ringR*TILE,0,Math.PI*2);
+    ctx.strokeStyle=`rgba(255,204,2,${alpha*0.7})`;
+    ctx.lineWidth=2; ctx.stroke();
+    // Dot
+    ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2);
+    ctx.fillStyle=`rgba(255,215,0,${alpha})`; ctx.fill();
+    // Guard path indicator dots
+    if (alpha>0.3){
+      ctx.font='12px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.globalAlpha=alpha*0.8;
+      ctx.fillText('🪙',px,py);
+      ctx.globalAlpha=1;
+    }
+  });
+}
+
+// ── guards ────────────────────────────────────────────────────────────────
+function renderGuards(){
+  const tw=TILE;
+  guards.forEach(g=>{
+    if (g.revealTimer<=0) return;
+    const px=g.x*tw, py=g.y*tw;
+    const isChase = g.state==='chase';
+    const isAlert = g.state==='alert'||g.state==='search'||g.state==='coin';
+    const alpha   = Math.min(1,g.revealTimer/20);
+    ctx.globalAlpha=alpha;
+
+    // Glow halo
+    const glowC=isChase?'255,23,68':isAlert?'255,160,0':'239,83,80';
+    const gr=ctx.createRadialGradient(px,py,0,px,py,tw*1.3);
+    gr.addColorStop(0,`rgba(${glowC},0.55)`);
+    gr.addColorStop(1,`rgba(${glowC},0)`);
+    ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(px,py,tw*1.3,0,Math.PI*2); ctx.fill();
+
+    // Body — flat cap shape
+    ctx.beginPath(); ctx.arc(px,py,tw*0.33,0,Math.PI*2);
+    ctx.fillStyle=isChase?'#ff1744':isAlert?'#ff6d00':'#ef5350';
+    ctx.fill();
+    // Uniform band
+    ctx.beginPath(); ctx.arc(px,py,tw*0.22,0,Math.PI*2);
+    ctx.fillStyle=isChase?'#b71c1c':isAlert?'#e65100':'#c62828'; ctx.fill();
+
+    // Eyes tracking player
+    const dx=player.x-g.x, dy=player.y-g.y, d=Math.sqrt(dx*dx+dy*dy)||1;
+    ctx.beginPath(); ctx.arc(px+(dx/d)*tw*0.16,py+(dy/d)*tw*0.16,tw*0.08,0,Math.PI*2);
+    ctx.fillStyle='#fff'; ctx.fill();
+
+    // State icon above head
+    if (isChase||isAlert){
+      ctx.font=`${tw*0.45}px serif`;
+      ctx.textAlign='center'; ctx.textBaseline='bottom';
+      ctx.fillStyle=isChase?'#ff1744':'#ffa726';
+      ctx.fillText(isChase?'❗':g.state==='coin'?'🪙':'❓',px,py-tw*0.38);
+    }
+
+    ctx.globalAlpha=1;
+  });
+}
+
+// ── player ────────────────────────────────────────────────────────────────
+function renderPlayer(){
+  const tw=TILE;
+  const px=player.x*tw, py=player.y*tw;
+  const spd=Math.sqrt(player.vx**2+player.vy**2);
+  const isFast=spd>0.16*0.6&&!tiptoeMode;
+  const playerColor=tiptoeMode?'#a78bfa':pal.acc;
+
+  // Glow
+  const glowR=tw*(tiptoeMode?0.45:0.62+Math.sin(frameCount*0.1)*0.08);
+  const gr=ctx.createRadialGradient(px,py,0,px,py,glowR);
+  gr.addColorStop(0,hexAlpha(playerColor,0.38));
+  gr.addColorStop(1,hexAlpha(playerColor,0));
+  ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(px,py,glowR,0,Math.PI*2); ctx.fill();
+
+  // Body
+  ctx.beginPath(); ctx.arc(px,py,tw*(tiptoeMode?0.24:0.29),0,Math.PI*2);
+  ctx.fillStyle=playerColor; ctx.fill();
+
+  // Eye
+  if (spd>0.003){
+    const nx=player.vx/(spd||1),ny=player.vy/(spd||1);
+    ctx.beginPath(); ctx.arc(px+nx*tw*0.13,py+ny*tw*0.13,tw*0.07,0,Math.PI*2);
+    ctx.fillStyle='#0d1117'; ctx.fill();
+  }
+
+  // Carrying treasure badge
+  if (hasTreasure){
+    ctx.font=`${tw*0.4}px serif`;
+    ctx.textAlign='center'; ctx.textBaseline='bottom';
+    ctx.fillText('⭐',px,py-tw*0.28);
+  }
+
+  // Speed trail
+  if (isFast){
+    ctx.beginPath();
+    ctx.arc(px-player.vx*tw*4,py-player.vy*tw*4,tw*0.12,0,Math.PI*2);
+    ctx.fillStyle=hexAlpha(playerColor,0.22); ctx.fill();
+  }
+
+  // Tiptoe ripple
+  if (tiptoeMode&&spd>0.01&&frameCount%12===0){
+    spawnParticles(player.x,player.y,'#a78bfa',2);
+  }
+}
+
+// ── particles ─────────────────────────────────────────────────────────────
+function renderParticles(){
+  particles.forEach(p=>{
+    ctx.globalAlpha=p.life;
+    ctx.beginPath(); ctx.arc(p.x*TILE,p.y*TILE,2.5*p.life,0,Math.PI*2);
+    ctx.fillStyle=p.color; ctx.fill();
+  });
+  ctx.globalAlpha=1;
+}
+
+// ── vignette ──────────────────────────────────────────────────────────────
+function renderVignette(){
+  const gr=ctx.createRadialGradient(W/2,H/2,H*0.18,W/2,H/2,H*0.88);
+  gr.addColorStop(0,'rgba(0,0,0,0)');
+  gr.addColorStop(1,'rgba(0,0,0,0.78)');
+  ctx.fillStyle=gr; ctx.fillRect(0,0,W,H);
+}
+
+function renderTiptoeOverlay(){
+  // Subtle purple border pulse
+  const pulse=0.4+Math.sin(frameCount*0.15)*0.15;
+  ctx.strokeStyle=`rgba(167,139,250,${pulse})`;
+  ctx.lineWidth=3;
+  ctx.strokeRect(2,2,W-4,H-4);
+}
+
+// ── utils ─────────────────────────────────────────────────────────────────
+function dist(ax,ay,bx,by){ return Math.sqrt((ax-bx)**2+(ay-by)**2); }
+function clamp(v,lo,hi){ return v<lo?lo:v>hi?hi:v; }
+
+function hexAlpha(hex,a){
+  // Works with #rrggbb format
+  const c=hex.replace('#','').match(/.{2}/g).map(x=>parseInt(x,16));
+  return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+}
+
+// ── loop ──────────────────────────────────────────────────────────────────
+let lastTime=0;
+function loop(ts){
+  if ((ts-lastTime)>=1000/FPS){ update(); render(); lastTime=ts; }
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('DOMContentLoaded', init);
+})();
+</script>
+</body>
+</html>
